@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Query
 
-from services.mock_hbase import MockHBaseClient
+from services.hbase_client import HBaseClient
 
 
 router = APIRouter()
-hbase = MockHBaseClient()
+hbase = HBaseClient()
 
 
 @router.get("/sentiment")
