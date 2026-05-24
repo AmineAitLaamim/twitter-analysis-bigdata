@@ -1,0 +1,29 @@
+disable 'tweets'
+drop 'tweets'
+disable 'users'
+drop 'users'
+disable 'hashtags'
+drop 'hashtags'
+disable 'analytics'
+drop 'analytics'
+
+create 'tweets',
+  {NAME => 'content',  COMPRESSION => 'GZ', BLOOMFILTER => 'ROW'},
+  {NAME => 'meta',     COMPRESSION => 'GZ'},
+  {NAME => 'analysis', COMPRESSION => 'GZ', TTL => 7776000}
+
+create 'users',
+  {NAME => 'profile',  COMPRESSION => 'GZ'},
+  {NAME => 'stats',    COMPRESSION => 'GZ'},
+  {NAME => 'activity', COMPRESSION => 'GZ'}
+
+create 'hashtags',
+  {NAME => 'counts',     COMPRESSION => 'GZ'},
+  {NAME => 'engagement', COMPRESSION => 'GZ'},
+  {NAME => 'meta',       COMPRESSION => 'GZ'}
+
+create 'analytics',
+  {NAME => 'data', COMPRESSION => 'GZ', TTL => 172800}
+
+list
+exit
