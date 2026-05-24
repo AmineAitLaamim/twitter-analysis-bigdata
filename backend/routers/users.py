@@ -2,11 +2,11 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from services.mock_hbase import MockHBaseClient
+from services.hbase_client import HBaseClient
 
 
 router = APIRouter()
-hbase = MockHBaseClient()
+hbase = HBaseClient()
 
 
 @router.get("/top")
