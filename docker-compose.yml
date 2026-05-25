@@ -8,15 +8,22 @@ volumes:
   hbase_data:
 
 services:
+
+  # ── ZOOKEEPER ────────────────────────────────────────────────────
   zookeeper:
     image: confluentinc/cp-zookeeper:7.4.0
-    environment: { ZOOKEEPER_CLIENT_PORT: 2181 }
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
     networks: [analytics-net]
 
+  # ── KAFKA ────────────────────────────────────────────────────────
   kafka:
     image: confluentinc/cp-kafka:7.4.0
+    container_name: kafka
     depends_on: [zookeeper]
-    ports: ["9092:9092"]
+    ports:
+      - "9092:9092"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
@@ -24,40 +31,140 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
     networks: [analytics-net]
 
+  # ── HBASE ────────────────────────────────────────────────────────
   hbase:
     image: dajobe/hbase
-    ports: ["9090:9090", "16010:16010"]
-    volumes: [hbase_data:/hbase-data]
+    container_name: hbase
+    ports:
+      - "9090:9090"    # Thrift server — used by happybase (Python)
+      - "16010:16010"  # HBase Master Web UI
+    volumes:
+      - hbase_data:/hbase-data
     networks: [analytics-net]
 
-  spark-master:
-    image: bitnami/spark:3.4
-    environment: [SPARK_MODE=master]
-    ports: ["8080:8080", "7077:7077"]
-    networks: [analytics-net]
-
-  spark-worker:
-    image: bitnami/spark:3.4
-    depends_on: [spark-master]
+  # ── HDFS ─────────────────────────────────────────────────────────
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: namenode
     environment:
-      - SPARK_MODE=worker
-      - SPARK_MASTER_URL=spark://spark-master:7077
-      - SPARK_WORKER_MEMORY=2G
+      - CLUSTER_NAME=twitter-analysis-cluster
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+      - HDFS_CONF_dfs_blocksize=2097152   # 2 MB blocks
+    ports:
+      - "9870:9870"   # HDFS Web UI
+      - "9000:9000"   # HDFS port
     networks: [analytics-net]
 
+  datanode-1:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode-1
+    environment:
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+    depends_on: [namenode]
+    networks: [analytics-net]
+
+  datanode-2:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode-2
+    environment:
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+    depends_on: [namenode]
+    networks: [analytics-net]
+
+  datanode-3:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode-3
+    environment:
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+    depends_on: [namenode]
+    networks: [analytics-net]
+
+  # ── SPARK ────────────────────────────────────────────────────────
+  spark-master:
+    image: apache/spark:3.5.0
+    container_name: spark-master
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    environment:
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+    ports:
+      - "8080:8080"   # Spark Master Web UI
+      - "7077:7077"   # Spark Master port
+      - "4040:4040"   # Spark Job UI
+    depends_on: [namenode]
+    networks: [analytics-net]
+
+  # Worker 1 — collocated with datanode-1
+  spark-worker-1:
+    image: apache/spark:3.5.0
+    container_name: spark-worker-1
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    environment:
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+      - SPARK_WORKER_HOSTNAME=spark-worker-1
+    depends_on: [spark-master, datanode-1]
+    networks: [analytics-net]
+
+  # Worker 2 — collocated with datanode-2
+  spark-worker-2:
+    image: apache/spark:3.5.0
+    container_name: spark-worker-2
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    environment:
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+      - SPARK_WORKER_HOSTNAME=spark-worker-2
+    depends_on: [spark-master, datanode-2]
+    networks: [analytics-net]
+
+  # Worker 3 — collocated with datanode-3
+  spark-worker-3:
+    image: apache/spark:3.5.0
+    container_name: spark-worker-3
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    environment:
+      - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+      - SPARK_WORKER_HOSTNAME=spark-worker-3
+    depends_on: [spark-master, datanode-3]
+    networks: [analytics-net]
+
+  # ── TWEET SIMULATOR ──────────────────────────────────────────────
+  simulator:
+    build: ./simulator
+    container_name: simulator
+    environment:
+      KAFKA_HOST: kafka
+      TWEET_RATE: 200
+    depends_on: [kafka]
+    networks: [analytics-net]
+
+  # ── HBASE WRITER (Kafka → HBase) ─────────────────────────────────
+  ingestion:
+    build: ./ingestion
+    container_name: ingestion
+    environment:
+      KAFKA_HOST: kafka
+      HBASE_HOST: hbase
+    depends_on: [kafka, hbase]
+    networks: [analytics-net]
+
+  # ── FASTAPI ──────────────────────────────────────────────────────
   fastapi:
     build: ./backend
-    ports: ["8000:8000"]
-    depends_on: [hbase, kafka]
+    container_name: fastapi
+    ports:
+      - "8000:8000"
     environment:
       HBASE_HOST: hbase
       KAFKA_HOST: kafka
+    depends_on: [hbase, kafka]
     networks: [analytics-net]
 
+  # ── REACT FRONTEND ───────────────────────────────────────────────
   frontend:
     build: ./frontend
-    ports: ["3000:3000"]
-    depends_on: [fastapi]
+    container_name: frontend
+    ports:
+      - "3000:3000"
     environment:
       VITE_API_URL: http://localhost:8000
+    depends_on: [fastapi]
     networks: [analytics-net]
