@@ -515,128 +515,158 @@ For this project, Spark runs in two modes.
 
 ---
 
-### Mode 1 — Spark Streaming (real-time, every 10 seconds)
+### Mode 1 — Spark Structured Streaming (real-time, every 10 seconds)
 
-Spark Streaming reads from Kafka in micro-batches. Every 10 seconds it pulls all tweets that arrived since the last batch and processes them.
+Spark Structured Streaming reads from Kafka in micro-batches. Every 10 seconds it pulls all tweets that arrived since the last batch and processes them.
 
-#### Full Spark Streaming code
+> **Note:** We use the Structured Streaming API (SparkSession + readStream), not the
+> deprecated DStream API (SparkContext + StreamingContext). Structured Streaming is the
+> recommended approach for Spark 3.x.
+
+#### Full Spark Structured Streaming code
 
 ```python
-from pyspark import SparkContext
-from pyspark.streaming import StreamingContext
-from pyspark.streaming.kafka import KafkaUtils
-from textblob import TextBlob
-import json
+# spark/streaming_job.py
+import os, json, logging
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import from_json, col, udf, explode, count
+from pyspark.sql.types import (
+    StructType, StructField, StringType, IntegerType,
+    LongType, ArrayType, FloatType
+)
 import happybase
-import time
-
-sc  = SparkContext("local[4]", "SocialMediaAnalytics")  # 4 CPU threads
-ssc = StreamingContext(sc, batchDuration=10)            # 10-second micro-batches
-
-# Connect to Kafka topic
-tweets_stream = KafkaUtils.createStream(
-    ssc,
-    zk_quorum='localhost:2181',
-    group_id='spark-group',
-    topics={'raw-tweets': 1}   # 1 thread per partition
-)
-
-# ── Step 1: Parse JSON ──────────────────────────────────────────────
-parsed = tweets_stream.map(lambda msg: json.loads(msg[1]))
-
-
-# ── Step 2: Sentiment Analysis ─────────────────────────────────────
-def add_sentiment(tweet):
-    blob = TextBlob(tweet['text'])
-    score = blob.sentiment.polarity   # -1.0 to +1.0
-
-    if score > 0.1:
-        label = 'positive'
-    elif score < -0.1:
-        label = 'negative'
-    else:
-        label = 'neutral'
-
-    tweet['sentiment']       = label
-    tweet['sentiment_score'] = round(score, 3)
-    return tweet
-
-enriched = parsed.map(add_sentiment)
-
-
-# ── Step 3: Write enriched tweets to Kafka processed-tweets ────────
 from kafka import KafkaProducer
-producer = KafkaProducer(
-    bootstrap_servers='localhost:9092',
-    value_serializer=lambda v: json.dumps(v).encode()
-)
+from sentiment import analyze
 
-def publish_enriched(tweet):
-    producer.send('processed-tweets', tweet)
+# ── Configuration (from environment / .env) ─────────────────────────
+KAFKA_HOST = os.environ.get('KAFKA_HOST', 'kafka')
+KAFKA_PORT = os.environ.get('KAFKA_PORT', '9092')
+HBASE_HOST = os.environ.get('HBASE_HOST', 'hbase')
+HBASE_PORT = os.environ.get('HBASE_PORT', '9090')
+SPARK_MASTER = os.environ.get('SPARK_MASTER', 'spark://spark-master:7077')
+KAFKA_BOOTSTRAP = f'{KAFKA_HOST}:{KAFKA_PORT}'
 
-enriched.foreachRDD(lambda rdd: rdd.foreach(publish_enriched))
+# ── Step 1: Define tweet schema (matches simulator output) ──────────
+TWEET_SCHEMA = StructType([
+    StructField('tweet_id',  StringType(), True),
+    StructField('user_id',   StringType(), True),
+    StructField('text',      StringType(), True),
+    StructField('hashtags',  ArrayType(StringType()), True),
+    StructField('likes',     IntegerType(), True),
+    StructField('retweets',  IntegerType(), True),
+    StructField('timestamp', LongType(), True),
+    StructField('location',  StringType(), True),
+])
 
+# ── Step 2: Sentiment UDFs ──────────────────────────────────────────
+def _sentiment_label(text):
+    if text is None: return 'neutral'
+    return analyze(text)['sentiment']
 
-# ── Step 4: Count hashtags in this 10-second batch ─────────────────
-hashtag_counts = (
-    enriched
-    .flatMap(lambda t: t['hashtags'])              # extract all hashtags
-    .map(lambda h: (h, 1))                         # (hashtag, 1)
-    .reduceByKey(lambda a, b: a + b)               # sum per hashtag
-)
+def _sentiment_score(text):
+    if text is None: return 0.0
+    return float(analyze(text)['sentiment_score'])
 
+sentiment_label_udf = udf(_sentiment_label, StringType())
+sentiment_score_udf = udf(_sentiment_score, FloatType())
 
-# ── Step 5: Count sentiment breakdown ──────────────────────────────
-sentiment_counts = (
-    enriched
-    .map(lambda t: (t['sentiment'], 1))
-    .reduceByKey(lambda a, b: a + b)
-)
+# ── Step 3: foreachBatch callback ───────────────────────────────────
+def write_to_hbase(batch_df, batch_id):
+    """Process each micro-batch: write analytics to HBase and
+    publish enriched tweets to Kafka processed-tweets topic."""
+    if batch_df.rdd.isEmpty():
+        return
 
+    # 3a. Publish enriched tweets to processed-tweets
+    producer = KafkaProducer(
+        bootstrap_servers=KAFKA_BOOTSTRAP,
+        value_serializer=lambda v: json.dumps(v).encode('utf-8')
+    )
+    for row in batch_df.collect():
+        tweet = {
+            'tweet_id': row.tweet_id, 'user_id': row.user_id,
+            'text': row.text, 'hashtags': row.hashtags,
+            'likes': row.likes, 'retweets': row.retweets,
+            'timestamp': row.timestamp, 'location': row.location,
+            'sentiment': row.sentiment, 'sentiment_score': row.sentiment_score,
+        }
+        producer.send('processed-tweets', tweet)
+    producer.flush()
+    producer.close()
 
-# ── Step 6: Detect viral tweets ────────────────────────────────────
-viral_tweets = enriched.filter(lambda t: t['likes'] > 1000)
-
-
-# ── Step 7: Write all results to HBase analytics table ─────────────
-def write_analytics_to_hbase(time, rdd_hashtags, rdd_sentiment, rdd_viral):
-    conn = happybase.Connection('localhost', port=9090)
+    # 3b. Write to HBase analytics table
+    conn = happybase.Connection(HBASE_HOST, port=int(HBASE_PORT))
     analytics = conn.table('analytics')
 
-    # Write trending hashtags
-    row_data = {}
-    for tag, count in rdd_hashtags.collect():
-        col = f'data:{tag}'.encode()
-        row_data[col] = str(count).encode()
-    if row_data:
-        analytics.put(b'trending_latest', row_data)
+    # Trending hashtags
+    hashtag_rows = (
+        batch_df.select(explode(col('hashtags')).alias('hashtag'))
+        .groupBy('hashtag').agg(count('*').alias('cnt')).collect()
+    )
+    if hashtag_rows:
+        tag_data = {f'data:{r.hashtag}'.encode(): str(r.cnt).encode()
+                    for r in hashtag_rows}
+        analytics.put(b'trending_latest', tag_data)
 
-    # Write sentiment breakdown
-    sentiment_data = {}
-    for label, count in rdd_sentiment.collect():
-        col = f'data:{label}'.encode()
-        sentiment_data[col] = str(count).encode()
-    if sentiment_data:
-        analytics.put(b'sentiment_latest', sentiment_data)
+    # Sentiment breakdown
+    sent_rows = batch_df.groupBy('sentiment').agg(count('*').alias('cnt')).collect()
+    if sent_rows:
+        sent_data = {f'data:{r.sentiment}'.encode(): str(r.cnt).encode()
+                     for r in sent_rows}
+        analytics.put(b'sentiment_latest', sent_data)
 
-    # Write viral tweets
-    for tweet in rdd_viral.collect():
-        row_key = f"viral_{tweet['tweet_id']}".encode()
-        analytics.put(row_key, {
-            b'data:text':     tweet['text'].encode(),
-            b'data:likes':    str(tweet['likes']).encode(),
-            b'data:user_id':  tweet['user_id'].encode(),
+    # Viral tweets (likes > 1000)
+    for r in batch_df.filter(col('likes') > 1000).collect():
+        analytics.put(f"viral_{r.tweet_id}".encode(), {
+            b'data:text': r.text.encode(), b'data:likes': str(r.likes).encode(),
+            b'data:user_id': r.user_id.encode(),
         })
-
     conn.close()
 
-# Combine streams and write
-hashtag_counts.foreachRDD(
-    lambda rdd: write_analytics_to_hbase(None, rdd, sentiment_counts, viral_tweets)
-)
+# ── Step 4: Main entry point ────────────────────────────────────────
+def main():
+    spark = (
+        SparkSession.builder
+        .appName('TwitterStreamingAnalytics')
+        .master(SPARK_MASTER)
+        .config('spark.jars.packages',
+                'org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0')
+        .getOrCreate()
+    )
 
-ssc.start()
-ssc.awaitTermination()
+    # Read from Kafka raw-tweets topic
+    raw_stream = (
+        spark.readStream.format('kafka')
+        .option('kafka.bootstrap.servers', KAFKA_BOOTSTRAP)
+        .option('subscribe', 'raw-tweets')
+        .option('startingOffsets', 'latest')
+        .load()
+    )
+
+    # Parse JSON → DataFrame → enrich with sentiment
+    tweets_df = (
+        raw_stream.selectExpr('CAST(value AS STRING) as json_str')
+        .select(from_json(col('json_str'), TWEET_SCHEMA).alias('tweet'))
+        .select('tweet.*')
+    )
+    enriched_df = (
+        tweets_df
+        .withColumn('sentiment', sentiment_label_udf(col('text')))
+        .withColumn('sentiment_score', sentiment_score_udf(col('text')))
+    )
+
+    # Start streaming with 10-second micro-batches
+    query = (
+        enriched_df.writeStream
+        .foreachBatch(write_to_hbase)
+        .trigger(processingTime='10 seconds')
+        .option('checkpointLocation', '/tmp/spark-streaming-checkpoint')
+        .start()
+    )
+    query.awaitTermination()
+
+if __name__ == '__main__':
+    main()
 ```
 
 ---
@@ -646,16 +676,23 @@ ssc.awaitTermination()
 The batch job runs every hour as a separate Spark job. It reads a full hour of tweets from HBase and computes deeper statistics.
 
 ```python
+import os
 from pyspark.sql import SparkSession
 import happybase
 from datetime import datetime, timedelta
+from sentiment import analyze  # from Member 3's module
+
+HBASE_HOST = os.environ.get('HBASE_HOST', 'hbase')
+HBASE_PORT = os.environ.get('HBASE_PORT', '9090')
+SPARK_MASTER = os.environ.get('SPARK_MASTER', 'spark://spark-master:7077')
 
 spark = SparkSession.builder \
     .appName("HourlyBatchAnalytics") \
+    .master(SPARK_MASTER) \
     .getOrCreate()
 
 # ── Step 1: Read last hour of tweets from HBase ─────────────────────
-conn = happybase.Connection('localhost', port=9090)
+conn = happybase.Connection(HBASE_HOST, port=int(HBASE_PORT))
 table = conn.table('tweets')
 
 one_hour_ago = int((datetime.now() - timedelta(hours=1)).timestamp() * 1000)
@@ -715,7 +752,7 @@ top_users = spark.sql("""
 
 # ── Step 6: Write hourly results to HBase analytics table ──────────
 time_bucket = datetime.now().strftime('%Y%m%d%H')  # e.g. 2024010114
-conn = happybase.Connection('localhost', port=9090)
+conn = happybase.Connection(HBASE_HOST, port=int(HBASE_PORT))
 analytics = conn.table('analytics')
 
 # Write top hashtags for this hour
