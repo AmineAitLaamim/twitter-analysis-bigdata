@@ -32,15 +32,19 @@ services:
       zookeeper:
         condition: service_healthy
     ports:
-      - "${KAFKA_PORT}:${KAFKA_PORT}"
+      - "${KAFKA_PORT}:9092"
+      - "29092:29092"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: ${ZOOKEEPER_HOST}:${ZOOKEEPER_PORT}
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${KAFKA_HOST}:${KAFKA_PORT}
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
     networks: [analytics-net]
     healthcheck:
-      test: ["CMD", "kafka-topics.sh", "--bootstrap-server", "localhost:${KAFKA_PORT}", "--list"]
+      test: ["CMD", "kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
       interval: 15s
       timeout: 10s
       retries: 5
@@ -51,7 +55,7 @@ services:
     container_name: hbase
     restart: unless-stopped
     ports:
-      - "${HBASE_PORT}:${HBASE_PORT}"
+      - "16000:16000"
       - "16010:16010"
     volumes:
       - hbase_data:/data
@@ -68,7 +72,7 @@ services:
     container_name: namenode
     restart: unless-stopped
     environment:
-      - CLUSTER_NAME=twitter-analysis-cluster
+      - CLUSTER_NAME=${CLUSTER_NAME}
       - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
       - HDFS_CONF_dfs_blocksize=2097152
     ports:
