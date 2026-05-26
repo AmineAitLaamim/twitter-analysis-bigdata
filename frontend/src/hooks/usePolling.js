@@ -3,28 +3,30 @@
 // Il sert à faire du polling (rafraîchissement automatique des données)
 // pour afficher des statistiques en temps réel dans le dashboard.
 import { useState, useEffect } from "react"
+import axios from "axios"
 
-export function usePolling(url, interval = 5000) {
+const API = import.meta.env.VITE_API_URL || "http://localhost:8000"
+
+export function usePolling(url, ms = 30000) {
   const [data, setData]       = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const fetchData = async () => {
+    const fetch = async () => {
       try {
-        const res = await fetch(url)
-        const json = await res.json()
-        setData(json)
-      } catch {
-        // API pas encore prête — on garde les données mockées
-      } finally {
+        const res = await axios.get(`${API}${url}`)
+        setData(res.data)
+        setLoading(false)
+      } catch (e) {
+        console.log(e)
         setLoading(false)
       }
     }
 
-    fetchData()
-    const timer = setInterval(fetchData, interval)
-    return () => clearInterval(timer)
-  }, [url, interval])
+    fetch()
+    const id = setInterval(fetch, ms)
+    return () => clearInterval(id)
+  }, [url, ms])
 
   return { data, loading }
 }
