@@ -4,6 +4,9 @@ networks:
   analytics-net:
     driver: bridge
 
+volumes:
+  hbase_data:
+
 services:
 
   # ── ZOOKEEPER ────────────────────────────────────────────────────
@@ -50,6 +53,8 @@ services:
     ports:
       - "${HBASE_PORT}:${HBASE_PORT}"
       - "16010:16010"
+    volumes:
+      - hbase_data:/data
     networks: [analytics-net]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:16010"]
