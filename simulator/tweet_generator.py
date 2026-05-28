@@ -1,11 +1,16 @@
 import json
+import os
 import random
 import time
 import uuid
 from kafka import KafkaProducer
 
+KAFKA_HOST = os.environ.get('KAFKA_HOST', 'kafka')
+KAFKA_PORT = os.environ.get('KAFKA_PORT', '29092')
+KAFKA_BOOTSTRAP = f'{KAFKA_HOST}:{KAFKA_PORT}'
+
 producer = KafkaProducer(
-    bootstrap_servers='localhost:9092',
+    bootstrap_servers=KAFKA_BOOTSTRAP,
     value_serializer=lambda v: json.dumps(v).encode()
 )
 
@@ -38,9 +43,9 @@ def generate_tweet():
         "location":  random.choice(LOCATIONS)
     }
 
-RATE = 10  # augmente à 200 pour la démo
+RATE = int(os.environ.get('TWEET_RATE', 10))
 
-print(f"Simulateur démarré — {RATE} tweets/seconde")
+print(f"Simulateur démarré — {RATE} tweets/seconde → {KAFKA_BOOTSTRAP}")
 
 while True:
     tweet = generate_tweet()

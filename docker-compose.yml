@@ -212,10 +212,31 @@ services:
     restart: unless-stopped
     environment:
       KAFKA_HOST: ${KAFKA_HOST}
-      KAFKA_PORT: ${KAFKA_PORT}
+      KAFKA_PORT: 29092
       TWEET_RATE: ${TWEET_RATE}
     depends_on:
       kafka:
+        condition: service_healthy
+    networks: [analytics-net]
+
+  # ── SPARK STREAMING JOB ──────────────────────────────────────────
+  spark-streaming:
+    build: ./spark
+    container_name: spark-streaming
+    restart: unless-stopped
+    command: ["/opt/spark/bin/spark-submit", "--master", "${SPARK_MASTER}", "/opt/spark/work-dir/streaming_job.py"]
+    environment:
+      KAFKA_HOST: ${KAFKA_HOST}
+      KAFKA_PORT: 29092
+      HBASE_HOST: ${HBASE_HOST}
+      HBASE_PORT: ${HBASE_PORT}
+      SPARK_MASTER: ${SPARK_MASTER}
+    depends_on:
+      kafka:
+        condition: service_healthy
+      hbase:
+        condition: service_healthy
+      spark-master:
         condition: service_healthy
     networks: [analytics-net]
 
@@ -226,7 +247,7 @@ services:
     restart: unless-stopped
     environment:
       KAFKA_HOST: ${KAFKA_HOST}
-      KAFKA_PORT: ${KAFKA_PORT}
+      KAFKA_PORT: 29092
       HBASE_HOST: ${HBASE_HOST}
       HBASE_PORT: ${HBASE_PORT}
     depends_on:
