@@ -20,6 +20,9 @@ help:
 	@echo "  make hbase-setup   - Run all standalone HBase setup steps sequentially"
 
 # Main project commands
+rm:
+	docker container prune
+
 up:
 	docker-compose up -d
 
