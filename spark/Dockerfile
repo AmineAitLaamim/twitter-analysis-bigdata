@@ -7,7 +7,7 @@ COPY requirements.txt /opt/spark/work-dir/
 RUN pip install --no-cache-dir -r /opt/spark/work-dir/requirements.txt
 
 # Download TextBlob corpora (needed for sentiment analysis)
-RUN python -m textblob.download_corpora
+RUN python3 -m textblob.download_corpora
 
 # Copy application code
 COPY sentiment.py /opt/spark/work-dir/
