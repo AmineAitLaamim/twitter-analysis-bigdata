@@ -7,7 +7,7 @@ const EMOJI = {
 }
 
 export default function LiveFeed() {
-    const { data: tweets, loading} = usePolling("/api/tweets/recent? limit=50", 2000)
+    const { data: tweets, loading} = usePolling("/api/tweets/recent?limit=50", 2000)
 
     if (loading) {
      return <p className="p-6 text-gray-500">Loading...</p>   
@@ -23,7 +23,7 @@ export default function LiveFeed() {
                     >
                         <div className="flex justify-between">
                             <span className="text-xs text-gray-400 font-mono">
-                                {t.tweet_id.split('_').slice(0,2).joint('_')}
+                                {t.tweet_id.split('_').slice(0,2).join('_')}
                             </span>
                             <span>{EMOJI[t.sentiment] || "😐"}</span>
                         </div>
