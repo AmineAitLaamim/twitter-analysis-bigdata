@@ -1,11 +1,11 @@
-disable 'tweets'
-drop 'tweets'
-disable 'users'
-drop 'users'
-disable 'hashtags'
-drop 'hashtags'
-disable 'analytics'
-drop 'analytics'
+tables = ['tweets', 'users', 'hashtags', 'analytics']
+
+tables.each do |table_name|
+  if exists(table_name)
+    disable table_name if is_enabled(table_name)
+    drop table_name
+  end
+end
 
 create 'tweets',
   {NAME => 'content',  COMPRESSION => 'GZ', BLOOMFILTER => 'ROW'},

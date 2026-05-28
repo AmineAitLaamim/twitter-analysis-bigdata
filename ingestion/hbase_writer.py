@@ -14,11 +14,11 @@ KAFKA_BOOTSTRAP = f'{KAFKA_HOST}:{KAFKA_PORT}'
 print(f"HBase writer démarré — Kafka: {KAFKA_BOOTSTRAP}, HBase: {HBASE_HOST}:{HBASE_PORT}")
 
 consumer = KafkaConsumer(
-    'processed-tweets',
+    os.environ.get('KAFKA_TOPIC', 'raw-tweets'),
     bootstrap_servers=KAFKA_BOOTSTRAP,
     group_id='hbase-writer-group',
     value_deserializer=lambda m: json.loads(m.decode()),
-    auto_offset_reset='earliest'
+    auto_offset_reset='latest'
 )
 
 conn  = happybase.Connection(HBASE_HOST, port=HBASE_PORT)
@@ -38,4 +38,9 @@ for message in consumer:
         b'meta:location':      t['location'].encode(),
         b'analysis:sentiment': t.get('sentiment', 'neutral').encode(),
         b'analysis:score':     str(t.get('sentiment_score', 0.0)).encode(),
+    })
+
+    analytics = conn.table('analytics')
+    analytics.put(b'geo_latest', {
+        f"data:{t['location']}".encode(): b'1'
     })
