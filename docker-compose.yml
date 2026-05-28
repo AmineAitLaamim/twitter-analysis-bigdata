@@ -261,7 +261,7 @@ services:
           memory: 512M
           cpus: "0.5"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:${API_PORT}/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:${API_PORT}/health')"]
       interval: 15s
       timeout: 5s
       retries: 5
