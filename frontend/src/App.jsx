@@ -1,4 +1,6 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom"
+import { BrowserRouter, Routes, Route, Link } from "react-router-dom"
+import LiveFeed from "./pages/LiveFeed"
+import Trending from "./pages/Trending"
 import Sidebar   from "./components/Sidebar"
 import Sentiment from "./pages/Sentiment"
 import GeoMap    from "./pages/GeoMap"
@@ -64,8 +66,10 @@ export default function App() {
           </div>
 
           <Routes>
-            <Route path="/"          element={<Placeholder title="Live feed"  color="#6366f1" />} />
-            <Route path="/trending"  element={<Placeholder title="Trending"   color="#f59e0b" />} />
+            {/* <Route path="/"          element={<Placeholder title="Live feed"  color="#6366f1" />} />
+            <Route path="/trending"  element={<Placeholder title="Trending"   color="#f59e0b" />} /> */}
+            <Route path="/" element={<LiveFeed />} />
+            <Route path="/trending" element={<Trending />} />
             <Route path="/sentiment" element={<Sentiment />} />
             <Route path="/map"       element={<GeoMap    />} />
           </Routes>
