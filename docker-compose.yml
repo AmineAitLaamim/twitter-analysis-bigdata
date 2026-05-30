@@ -225,13 +225,35 @@ services:
     build: ./spark
     container_name: spark-streaming
     restart: unless-stopped
-    command: ["/opt/spark/bin/spark-submit", "--master", "${SPARK_MASTER}", "--packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0", "/opt/spark/work-dir/streaming_job.py"]
+    command: ["/opt/spark/bin/spark-submit", "--master", "${SPARK_MASTER}", "--packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0", "--py-files", "/opt/spark/work-dir/sentiment.py", "/opt/spark/work-dir/streaming_job.py"]
     environment:
       KAFKA_HOST: ${KAFKA_HOST}
       KAFKA_PORT: 29092
       HBASE_HOST: ${HBASE_HOST}
       HBASE_PORT: ${HBASE_PORT}
       SPARK_MASTER: ${SPARK_MASTER}
+    depends_on:
+      kafka:
+        condition: service_healthy
+      hbase:
+        condition: service_healthy
+      spark-master:
+        condition: service_healthy
+    networks: [analytics-net]
+
+  # ── SPARK BATCH JOB (scheduled hourly) ───────────────────────────
+  spark-batch:
+    build: ./spark
+    container_name: spark-batch
+    restart: unless-stopped
+    command: ["python", "/opt/spark/work-dir/scheduler.py"]
+    environment:
+      KAFKA_HOST: ${KAFKA_HOST}
+      KAFKA_PORT: 29092
+      HBASE_HOST: ${HBASE_HOST}
+      HBASE_PORT: ${HBASE_PORT}
+      SPARK_MASTER: ${SPARK_MASTER}
+      BATCH_INTERVAL_MINUTES: ${BATCH_INTERVAL_MINUTES:-60}
     depends_on:
       kafka:
         condition: service_healthy
