@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Query
-from services.mock_client import MockHBaseClient
+from services.hbase_client import HBaseClient
 
 router = APIRouter()
-hbase  = MockHBaseClient()
+hbase  = HBaseClient()
 
 @router.get("/trending")
 async def trending(limit: int = Query(default=10, le=50)):

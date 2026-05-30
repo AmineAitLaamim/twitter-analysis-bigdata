@@ -42,10 +42,20 @@ class HBaseClient:
         self._check_connection()
         try:
             table = self.conn.table('tweets')
+            rows = []
+            scan_limit = max(limit * 100, 1000)
+            for key, data in table.scan(limit=scan_limit):
+                key_text = key.decode()
+                try:
+                    rev_ts = int(key_text.rsplit('_', 1)[1])
+                except (IndexError, ValueError):
+                    rev_ts = 9_999_999_999_999
+                rows.append((rev_ts, key_text, data))
+
             result = []
-            for key, data in table.scan(limit=limit):
+            for _rev_ts, key_text, data in sorted(rows, key=lambda item: item[0])[:limit]:
                 result.append({
-                    "tweet_id":  key.decode(),
+                    "tweet_id":  key_text,
                     "text":      data.get(b'content:text', b'').decode(),
                     "hashtags":  data.get(b'content:hashtags', b'').decode().split(','),
                     "likes":     int(data.get(b'meta:likes', b'0')),
