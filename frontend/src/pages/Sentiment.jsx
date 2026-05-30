@@ -40,7 +40,7 @@ export default function Sentiment() {
   const pieData  = current  || MOCK_CURRENT
   const lineData = timeline || MOCK_TIMELINE
   const total    = pieData.positive + pieData.neutral + pieData.negative
-  const score    = Math.round((pieData.positive / total) * 100)
+  const score    = total > 0 ? Math.round((pieData.positive / total) * 100) : 0
 
   const chartPie = [
     { name: "Positive", value: pieData.positive },

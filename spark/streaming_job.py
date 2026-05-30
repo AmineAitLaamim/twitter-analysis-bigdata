@@ -10,6 +10,9 @@ enriches them with sentiment analysis, and:
 
 Uses Spark 3.5.0 Structured Streaming API (not legacy DStream).
 
+Sentiment analysis runs on the driver (not workers) to avoid
+requiring textblob to be installed on every Spark worker node.
+
 Environment variables (set via docker-compose / .env):
   KAFKA_HOST  (default: kafka)
   KAFKA_PORT  (default: 9092)
@@ -23,11 +26,11 @@ import logging
 
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
-    from_json, col, udf, explode, count, struct, to_json, lit
+    from_json, col, explode, count
 )
 from pyspark.sql.types import (
     StructType, StructField, StringType, IntegerType,
-    LongType, ArrayType, FloatType
+    LongType, ArrayType
 )
 
 import happybase
@@ -61,29 +64,13 @@ TWEET_SCHEMA = StructType([
 ])
 
 
-# ── Sentiment UDF ───────────────────────────────────────────────────
-def _sentiment_label(text):
-    """Extract sentiment label from text."""
-    if text is None:
-        return 'neutral'
-    return analyze(text)['sentiment']
-
-
-def _sentiment_score(text):
-    """Extract sentiment score from text."""
-    if text is None:
-        return 0.0
-    return float(analyze(text)['sentiment_score'])
-
-
-sentiment_label_udf = udf(_sentiment_label, StringType())
-sentiment_score_udf = udf(_sentiment_score, FloatType())
-
-
 # ── HBase Writer ────────────────────────────────────────────────────
 def write_to_hbase(batch_df, batch_id):
     """Process each micro-batch: write analytics to HBase and
     publish enriched tweets to Kafka processed-tweets topic.
+
+    Sentiment analysis runs here on the driver so we don't need
+    textblob installed on every Spark worker node.
 
     Called by foreachBatch every 10 seconds.
     """
@@ -91,8 +78,28 @@ def write_to_hbase(batch_df, batch_id):
         logger.info(f'Batch {batch_id}: empty, skipping')
         return
 
-    row_count = batch_df.count()
+    # Collect raw rows to driver first
+    raw_rows = batch_df.collect()
+    row_count = len(raw_rows)
     logger.info(f'Batch {batch_id}: processing {row_count} tweets')
+
+    # ── Enrich with sentiment on the driver ────────────────────────
+    enriched_rows = []
+    for row in raw_rows:
+        text = row.text
+        sent = analyze(text) if text else {'sentiment': 'neutral', 'sentiment_score': 0.0}
+        enriched_rows.append({
+            'tweet_id':        row.tweet_id,
+            'user_id':         row.user_id,
+            'text':            row.text,
+            'hashtags':        row.hashtags,
+            'likes':           row.likes,
+            'retweets':        row.retweets,
+            'timestamp':       row.timestamp,
+            'location':        row.location,
+            'sentiment':       sent['sentiment'],
+            'sentiment_score': sent['sentiment_score'],
+        })
 
     # ── 1. Publish enriched tweets to Kafka processed-tweets ────────
     try:
@@ -101,20 +108,7 @@ def write_to_hbase(batch_df, batch_id):
             value_serializer=lambda v: json.dumps(v).encode('utf-8')
         )
 
-        enriched_rows = batch_df.collect()
-        for row in enriched_rows:
-            tweet = {
-                'tweet_id':        row.tweet_id,
-                'user_id':         row.user_id,
-                'text':            row.text,
-                'hashtags':        row.hashtags,
-                'likes':           row.likes,
-                'retweets':        row.retweets,
-                'timestamp':       row.timestamp,
-                'location':        row.location,
-                'sentiment':       row.sentiment,
-                'sentiment_score': row.sentiment_score,
-            }
+        for tweet in enriched_rows:
             producer.send('processed-tweets', tweet)
 
         producer.flush()
@@ -129,47 +123,44 @@ def write_to_hbase(batch_df, batch_id):
         analytics_table = conn.table('analytics')
 
         # ── 2a. Trending hashtags ───────────────────────────────────
-        hashtag_rows = (
-            batch_df
-            .select(explode(col('hashtags')).alias('hashtag'))
-            .groupBy('hashtag')
-            .agg(count('*').alias('cnt'))
-            .collect()
-        )
+        # Compute hashtag counts from enriched data on the driver
+        hashtag_counts = {}
+        for tweet in enriched_rows:
+            for tag in (tweet['hashtags'] or []):
+                if tag:
+                    hashtag_counts[tag] = hashtag_counts.get(tag, 0) + 1
 
-        if hashtag_rows:
+        if hashtag_counts:
             tag_data = {}
-            for row in hashtag_rows:
-                col_name = f'data:{row.hashtag}'.encode()
-                tag_data[col_name] = str(row.cnt).encode()
+            for tag, cnt in hashtag_counts.items():
+                col_name = f'data:{tag}'.encode()
+                tag_data[col_name] = str(cnt).encode()
             analytics_table.put(b'trending_latest', tag_data)
-            logger.info(f'Batch {batch_id}: wrote {len(hashtag_rows)} hashtag counts to trending_latest')
+            logger.info(f'Batch {batch_id}: wrote {len(hashtag_counts)} hashtag counts to trending_latest')
 
         # ── 2b. Sentiment breakdown ─────────────────────────────────
-        sentiment_rows = (
-            batch_df
-            .groupBy('sentiment')
-            .agg(count('*').alias('cnt'))
-            .collect()
-        )
+        sentiment_counts = {}
+        for tweet in enriched_rows:
+            s = tweet['sentiment']
+            sentiment_counts[s] = sentiment_counts.get(s, 0) + 1
 
-        if sentiment_rows:
+        if sentiment_counts:
             sent_data = {}
-            for row in sentiment_rows:
-                col_name = f'data:{row.sentiment}'.encode()
-                sent_data[col_name] = str(row.cnt).encode()
+            for label, cnt in sentiment_counts.items():
+                col_name = f'data:{label}'.encode()
+                sent_data[col_name] = str(cnt).encode()
             analytics_table.put(b'sentiment_latest', sent_data)
-            logger.info(f'Batch {batch_id}: wrote sentiment breakdown to sentiment_latest')
+            logger.info(f'Batch {batch_id}: wrote sentiment breakdown to sentiment_latest: {sentiment_counts}')
 
         # ── 2c. Viral tweets (likes > threshold) ────────────────────
-        viral_rows = batch_df.filter(col('likes') > VIRAL_THRESHOLD).collect()
+        viral_rows = [t for t in enriched_rows if t['likes'] > VIRAL_THRESHOLD]
 
-        for row in viral_rows:
-            row_key = f"viral_{row.tweet_id}".encode()
+        for tweet in viral_rows:
+            row_key = f"viral_{tweet['tweet_id']}".encode()
             analytics_table.put(row_key, {
-                b'data:text':    row.text.encode() if row.text else b'',
-                b'data:likes':   str(row.likes).encode(),
-                b'data:user_id': row.user_id.encode() if row.user_id else b'',
+                b'data:text':    tweet['text'].encode() if tweet['text'] else b'',
+                b'data:likes':   str(tweet['likes']).encode(),
+                b'data:user_id': tweet['user_id'].encode() if tweet['user_id'] else b'',
             })
 
         if viral_rows:
@@ -225,17 +216,11 @@ def main():
         .select('tweet.*')
     )
 
-    # ── Enrich with sentiment ───────────────────────────────────────
-    enriched_df = (
-        tweets_df
-        .withColumn('sentiment',       sentiment_label_udf(col('text')))
-        .withColumn('sentiment_score', sentiment_score_udf(col('text')))
-    )
-
     # ── Start streaming with foreachBatch ───────────────────────────
-    # Process every 10 seconds
+    # Sentiment enrichment happens inside write_to_hbase on the driver
+    # so workers don't need textblob installed.
     query = (
-        enriched_df.writeStream
+        tweets_df.writeStream
         .foreachBatch(write_to_hbase)
         .trigger(processingTime='10 seconds')
         .option('checkpointLocation', '/tmp/spark-streaming-checkpoint')
