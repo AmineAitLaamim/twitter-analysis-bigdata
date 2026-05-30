@@ -13,6 +13,8 @@ export function usePolling(url, ms = 30000) {
   const [error, setError]     = useState(null)
 
   useEffect(() => {
+    setLoading(true)
+    setError(null)
     const fetch = async () => {
       try {
         const res = await axios.get(`${API}${url}`)
@@ -22,9 +24,6 @@ export function usePolling(url, ms = 30000) {
       } catch (e) {
         console.error(e)
         setError(e)
-        setLoading(false)
-      } catch (e) {
-        console.log(e)
         setLoading(false)
       }
     }
