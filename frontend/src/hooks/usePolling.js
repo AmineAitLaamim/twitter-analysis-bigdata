@@ -23,6 +23,9 @@ export function usePolling(url, ms = 30000) {
         console.error(e)
         setError(e)
         setLoading(false)
+      } catch (e) {
+        console.log(e)
+        setLoading(false)
       }
     }
 

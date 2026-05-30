@@ -4,6 +4,9 @@ networks:
   analytics-net:
     driver: bridge
 
+volumes:
+  hbase_data:
+
 services:
 
   # ── ZOOKEEPER ────────────────────────────────────────────────────
@@ -29,15 +32,19 @@ services:
       zookeeper:
         condition: service_healthy
     ports:
-      - "${KAFKA_PORT}:${KAFKA_PORT}"
+      - "${KAFKA_PORT}:9092"
+      - "29092:29092"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: ${ZOOKEEPER_HOST}:${ZOOKEEPER_PORT}
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${KAFKA_HOST}:${KAFKA_PORT}
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
     networks: [analytics-net]
     healthcheck:
-      test: ["CMD", "kafka-topics.sh", "--bootstrap-server", "localhost:${KAFKA_PORT}", "--list"]
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
       interval: 15s
       timeout: 10s
       retries: 5
@@ -46,13 +53,16 @@ services:
   hbase:
     image: dajobe/hbase
     container_name: hbase
+    hostname: hbase
     restart: unless-stopped
     ports:
-      - "${HBASE_PORT}:${HBASE_PORT}"
+      - "16000:16000"
       - "16010:16010"
+    volumes:
+      - hbase_data:/data
     networks: [analytics-net]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:16010"]
+      test: ["CMD", "/bin/bash", "-c", "</dev/tcp/localhost/9090"]
       interval: 20s
       timeout: 10s
       retries: 5
@@ -63,7 +73,7 @@ services:
     container_name: namenode
     restart: unless-stopped
     environment:
-      - CLUSTER_NAME=twitter-analysis-cluster
+      - CLUSTER_NAME=${CLUSTER_NAME}
       - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
       - HDFS_CONF_dfs_blocksize=2097152
     ports:
@@ -203,10 +213,31 @@ services:
     restart: unless-stopped
     environment:
       KAFKA_HOST: ${KAFKA_HOST}
-      KAFKA_PORT: ${KAFKA_PORT}
+      KAFKA_PORT: 29092
       TWEET_RATE: ${TWEET_RATE}
     depends_on:
       kafka:
+        condition: service_healthy
+    networks: [analytics-net]
+
+  # ── SPARK STREAMING JOB ──────────────────────────────────────────
+  spark-streaming:
+    build: ./spark
+    container_name: spark-streaming
+    restart: unless-stopped
+    command: ["/opt/spark/bin/spark-submit", "--master", "${SPARK_MASTER}", "--packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0", "/opt/spark/work-dir/streaming_job.py"]
+    environment:
+      KAFKA_HOST: ${KAFKA_HOST}
+      KAFKA_PORT: 29092
+      HBASE_HOST: ${HBASE_HOST}
+      HBASE_PORT: ${HBASE_PORT}
+      SPARK_MASTER: ${SPARK_MASTER}
+    depends_on:
+      kafka:
+        condition: service_healthy
+      hbase:
+        condition: service_healthy
+      spark-master:
         condition: service_healthy
     networks: [analytics-net]
 
@@ -217,7 +248,7 @@ services:
     restart: unless-stopped
     environment:
       KAFKA_HOST: ${KAFKA_HOST}
-      KAFKA_PORT: ${KAFKA_PORT}
+      KAFKA_PORT: 29092
       HBASE_HOST: ${HBASE_HOST}
       HBASE_PORT: ${HBASE_PORT}
     depends_on:
@@ -252,7 +283,7 @@ services:
           memory: 512M
           cpus: "0.5"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:${API_PORT}/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:${API_PORT}/health')"]
       interval: 15s
       timeout: 5s
       retries: 5
