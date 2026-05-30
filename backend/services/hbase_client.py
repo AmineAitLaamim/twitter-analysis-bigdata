@@ -6,32 +6,13 @@ from datetime import datetime, timedelta
 
 class HBaseClient:
     def __init__(self):
-        self.conn = None
-        self.connect()
-
-    def connect(self) -> bool:
         try:
             self.conn = happybase.Connection(HBASE_HOST, port=HBASE_PORT)
-            # Test connection
-            self.conn.tables()
-            print("✅ HBase connection established successfully!")
-            return True
         except Exception as e:
-            print(f"⚠️ HBase connection failed: {e}")
+            print(f"⚠️  HBase connection failed: {e}")
             self.conn = None
-            return False
 
     def _check_connection(self):
-        if self.conn is None:
-            self.connect()
-        else:
-            try:
-                # Verify existing connection is still active
-                self.conn.tables()
-            except Exception:
-                print("⚠️ HBase connection lost. Retrying...")
-                self.connect()
-
         if self.conn is None:
             raise HTTPException(
                 status_code=503,
