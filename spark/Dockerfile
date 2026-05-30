@@ -15,4 +15,5 @@ COPY streaming_job.py /opt/spark/work-dir/
 COPY batch_job.py /opt/spark/work-dir/
 COPY scheduler.py /opt/spark/work-dir/
 
+ENV PYTHONPATH=/opt/spark/work-dir:$PYTHONPATH
 WORKDIR /opt/spark/work-dir
