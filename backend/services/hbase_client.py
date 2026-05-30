@@ -6,18 +6,45 @@ from datetime import datetime, timedelta
 
 class HBaseClient:
     def __init__(self):
+        self.conn = None
+        self._connect()
+
+    def _connect(self):
+        """Establish (or re-establish) a connection to HBase."""
         try:
+            if self.conn is not None:
+                try:
+                    self.conn.close()
+                except Exception:
+                    pass
             self.conn = happybase.Connection(HBASE_HOST, port=HBASE_PORT)
         except Exception as e:
             print(f"⚠️  HBase connection failed: {e}")
             self.conn = None
 
-    def _check_connection(self):
+    def _get_connection(self):
+        """Return a live connection, reconnecting if the pipe is broken."""
+        if self.conn is None:
+            self._connect()
         if self.conn is None:
             raise HTTPException(
                 status_code=503,
                 detail="HBase is not available. Make sure Docker is running."
             )
+        # Quick health-check: if the socket is dead, reconnect once
+        try:
+            self.conn.tables()
+        except Exception:
+            self._connect()
+            if self.conn is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="HBase is not available. Make sure Docker is running."
+                )
+        return self.conn
+
+    def _check_connection(self):
+        self._get_connection()
 
     def get_recent_tweets(self, limit=50):
         self._check_connection()
