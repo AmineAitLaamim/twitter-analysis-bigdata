@@ -16,32 +16,100 @@ const MOCK_GEO = {
 }
 
 export default function GeoMap() {
-  const { data }   = usePolling("/api/analytics/geo", 30000)
-  const geoData    = data || MOCK_GEO
-  const max        = Math.max(...Object.values(geoData))
-  const total      = Object.values(geoData).reduce((a, b) => a + b, 0)
-  const topCountry = Object.entries(geoData).sort((a, b) => b[1] - a[1])[0]
+  const { data, error, loading } = usePolling("/api/analytics/geo", 30000)
+
+  const isOffline = !!error
+  const isDbEmpty = data && Object.keys(data).length === 0
+  const useMock = isOffline || isDbEmpty || loading || !data
+
+  const geoData = useMock ? MOCK_GEO : data
+
+  const keys = Object.keys(geoData)
+  const values = Object.values(geoData)
+  const max = values.length > 0 ? Math.max(...values) : 1
+  const total = values.reduce((a, b) => a + b, 0)
+  const sortedEntries = Object.entries(geoData).sort((a, b) => b[1] - a[1])
+  const topCountry = sortedEntries.length > 0 ? sortedEntries[0] : ["N/A", 0]
 
   return (
-    <div>
-      <div style={{ marginBottom: 18 }}>
-        <h2 style={{ fontSize: 15, fontWeight: 600, color: "#0f172a", letterSpacing: -0.2 }}>
-          Geographic activity
-        </h2>
-        <p style={{ fontSize: 11, color: "#94a3b8", marginTop: 3 }}>
-          Tweet volume by country
-        </p>
+    <div className="animate-fade-in">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+        <div>
+          <h2 style={{ fontSize: 16, fontWeight: 700, color: "#0f172a", letterSpacing: -0.3 }}>
+            Geographic activity
+          </h2>
+          <p style={{ fontSize: 11, color: "#94a3b8", marginTop: 3 }}>
+            Tweet volume by country
+          </p>
+        </div>
+        <div>
+          {isOffline ? (
+            <span style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              fontSize: 10, fontWeight: 600, color: "#ea580c",
+              background: "#ffedd5", border: "1px solid #fed7aa",
+              padding: "4px 10px", borderRadius: 20
+            }}>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#ea580c" }} />
+              Demo Mode (Database Offline)
+            </span>
+          ) : isDbEmpty ? (
+            <span style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              fontSize: 10, fontWeight: 600, color: "#0284c7",
+              background: "#e0f2fe", border: "1px solid #bae6fd",
+              padding: "4px 10px", borderRadius: 20
+            }}>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#0284c7" }} />
+              Demo Mode (Database Empty)
+            </span>
+          ) : (
+            <span style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              fontSize: 10, fontWeight: 600, color: "#16a34a",
+              background: "#dcfce7", border: "1px solid #bbf7d0",
+              padding: "4px 10px", borderRadius: 20
+            }}>
+              <span className="pulse-dot" style={{ width: 6, height: 6 }} />
+              Live Database Connected
+            </span>
+          )}
+        </div>
       </div>
 
-      {/* KPIs */}
+      {useMock && (
+        <div className="animate-fade-in" style={{
+          display: "flex", alignItems: "start", gap: 10,
+          background: isOffline ? "#fff7ed" : "#f0f9ff",
+          border: `1px solid ${isOffline ? "#ffedd5" : "#e0f2fe"}`,
+          borderRadius: 8, padding: "12px 16px", marginBottom: 18
+        }}>
+          <i className={`ti ${isOffline ? "ti-alert-triangle" : "ti-info-circle"}`} style={{
+            fontSize: 16, color: isOffline ? "#ea580c" : "#0284c7", marginTop: 2
+          }} />
+          <div>
+            <h4 style={{
+              fontSize: 12, fontWeight: 600,
+              color: isOffline ? "#c2410c" : "#0369a1", marginBottom: 2
+            }}>
+              {isOffline ? "HBase Connection Offline" : "Database Connected But Empty"}
+            </h4>
+            <p style={{ fontSize: 11, color: isOffline ? "#9a3412" : "#075985", lineHeight: 1.4 }}>
+              {isOffline
+                ? "FastAPI API could not connect to HBase. Displaying simulated metrics as a preview."
+                : "HBase is connected but no records yet. Displaying simulated metrics as a preview."}
+            </p>
+          </div>
+        </div>
+      )}
+
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
-        <KpiCard label="TOTAL TWEETS"   value={total.toLocaleString("en-US")}        sub="across all regions"               color="#3b82f6" icon="ti-world"      />
-        <KpiCard label="TOP COUNTRY"    value={topCountry[0]}                         sub={`${topCountry[1].toLocaleString("en-US")} tweets`} color="#f59e0b" icon="ti-star"  />
-        <KpiCard label="ACTIVE REGIONS" value={Object.keys(geoData).length}          sub="countries tracked"                color="#a78bfa" icon="ti-map-pin"    />
+        <KpiCard label="TOTAL TWEETS"   value={total.toLocaleString("en-US")} sub="across all regions"                          color="#3b82f6" icon="ti-world"   />
+        <KpiCard label="TOP COUNTRY"    value={topCountry[0]}                  sub={`${topCountry[1].toLocaleString("en-US")} tweets`} color="#f59e0b" icon="ti-star"    />
+        <KpiCard label="ACTIVE REGIONS" value={keys.length}                    sub="countries tracked"                           color="#a78bfa" icon="ti-map-pin" />
       </div>
 
-      {/* Map */}
-      <div style={{
+      <div className="hover-lift" style={{
         borderRadius: 8, overflow: "hidden",
         border: "1px solid #e2e8f0",
         height: "clamp(320px, 46vw, 480px)",

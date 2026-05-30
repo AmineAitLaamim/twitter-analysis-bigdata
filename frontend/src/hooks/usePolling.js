@@ -10,7 +10,6 @@ const API = import.meta.env.VITE_API_URL || "http://localhost:8000"
 export function usePolling(url, ms = 30000) {
   const [data, setData]       = useState(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError]     = useState(null)
 
   useEffect(() => {
     setLoading(true)
@@ -19,11 +18,6 @@ export function usePolling(url, ms = 30000) {
       try {
         const res = await axios.get(`${API}${url}`)
         setData(res.data)
-        setError(null)
-        setLoading(false)
-      } catch (e) {
-        console.error(e)
-        setError(e)
         setLoading(false)
       }
     }
@@ -33,5 +27,5 @@ export function usePolling(url, ms = 30000) {
     return () => clearInterval(id)
   }, [url, ms])
 
-  return { data, loading, error }
+  return { data, loading }
 }

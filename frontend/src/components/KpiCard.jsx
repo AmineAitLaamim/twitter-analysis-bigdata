@@ -1,6 +1,6 @@
 export default function KpiCard({ label, value, sub, color = "#3b82f6", icon }) {
   return (
-    <div className="hover-lift" style={{
+    <div style={{
       background: "#ffffff",
       border: "1px solid #e2e8f0",
       borderTop: `2px solid ${color}`,
