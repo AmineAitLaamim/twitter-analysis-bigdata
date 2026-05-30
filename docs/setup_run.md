@@ -10,11 +10,7 @@ simulator -> Kafka raw-tweets -> ingestion -> HBase tweets -> FastAPI -> fronten
 
 - Docker Desktop must be running.
 - `make` must be available from the terminal.
-- Run commands from the repository root:
-
-```powershell
-cd "C:\Users\pc\Desktop\cours\S6\Big Data et cloud computing\twitter-analysis-bigdata"
-```
+- Run commands from the repository root directory.
 
 ## Start Everything
 
