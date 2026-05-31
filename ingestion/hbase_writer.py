@@ -14,7 +14,7 @@ KAFKA_BOOTSTRAP = f'{KAFKA_HOST}:{KAFKA_PORT}'
 print(f"HBase writer démarré — Kafka: {KAFKA_BOOTSTRAP}, HBase: {HBASE_HOST}:{HBASE_PORT}")
 
 consumer = KafkaConsumer(
-    os.environ.get('KAFKA_TOPIC', 'raw-tweets'),
+    os.environ.get('KAFKA_TOPIC', 'processed-tweets'),
     bootstrap_servers=KAFKA_BOOTSTRAP,
     group_id='hbase-writer-group',
     value_deserializer=lambda m: json.loads(m.decode()),

@@ -39,7 +39,7 @@ def run_batch():
     logger.info(f'Triggering batch job at {now}')
 
     cmd = [
-        'spark-submit',
+        '/opt/spark/bin/spark-submit',
         '--master', SPARK_MASTER,
         BATCH_SCRIPT,
     ]
