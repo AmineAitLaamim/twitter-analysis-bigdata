@@ -27,6 +27,9 @@ TEMPLATES = [
     "Hot take: {tag} is overrated.",
     "Working on a {tag} project and loving it.",
     "{tag} will change everything in 5 years.",
+    "{tag} is absolutely terrible and disappointing.",
+    "I hate using {tag}, it is the worst experience ever.",
+    "So frustrated with {tag} today, complete waste of time.",
 ]
 
 def generate_tweet():
